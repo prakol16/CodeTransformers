@@ -69,7 +69,6 @@ class ASTEmbeddings(nn.Module):
         return torch.cat((node_type_embed_final.transpose(0, 1), hidden_states), dim=-1)
 
 
-
 class CodeEncoderLayer(nn.Module):
     def __init__(self, embed_dim=512, n_heads=8, dim_feedforward=2048):
         super().__init__()
@@ -94,7 +93,7 @@ class CodeEncoderLayer(nn.Module):
         attn_parent_bias = self.attn_parent(node_inputs).permute((1, 2, 0))
         # (batch_size, n_heads, num_nodes, num_nodes) * (batch_size, n_heads, num_nodes, 1)
         attn_mask = (parent_mask.transpose(1, 2).unsqueeze(1).expand((-1, self.n_heads, -1, -1))
-                     * attn_parent_bias.unsqueeze(-1))
+                     * attn_parent_bias.unsqueeze(-1)).contiguous()
 
         attn_child_bias = self.attn_child(node_inputs).permute((1, 2, 0))
         attn_mask += parent_mask.unsqueeze(1).expand((-1, self.n_heads, -1, -1)) * attn_child_bias.unsqueeze(-1)

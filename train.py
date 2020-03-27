@@ -149,8 +149,8 @@ if __name__ == "__main__":
     # Final results (train): num=1076863 max_child_index=7222, 4100, ....
     # Final results (eval): num=530254 max_child_index=1081, 1031, ...
 
-    # train: 854224
-    # val: 213242
+    # train: 426293
+    # val: 107045
     # test: 525781
     from torch import autograd
     args = parser.parse_args()
