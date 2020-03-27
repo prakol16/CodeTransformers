@@ -45,11 +45,20 @@ def preprocess(data_file, out_file, subtokens_file, num_lines, max_num_nodes, ch
         allowed_head_types = {'FunctionDef', 'ClassDef'}
         parsed: Py150k_AST = json.loads(line)
         result = []
-        for i, node in enumerate(parsed):
+        parsed_len = len(parsed)
+        i = 0
+        while i < parsed_len:
+            node = parsed[i]
+            added = False
             if node['type'] in allowed_head_types:
                 parsed_node = Node(parsed, i, token2ind)
                 if parsed_node.t_size <= max_num_nodes:
+                    i += parsed_node.t_size
+                    added = True
                     result.append((parsed_node.vectorize(), ast_index, i))
+            if not added:
+                i += 1
+
         return result
 
     is_validating = validation is not None
