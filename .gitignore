@@ -4,4 +4,5 @@ __pycache__/
 *.ipynb
 *_data/
 *_data_preprocessed/
+models/
 pwd
