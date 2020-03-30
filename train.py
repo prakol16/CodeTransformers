@@ -149,10 +149,9 @@ if __name__ == "__main__":
     # Final results (train): num=1076863 max_child_index=7222, 4100, ....
     # Final results (eval): num=530254 max_child_index=1081, 1031, ...
 
-    # train: 426293
-    # val: 107045
-    # test: 525781
-    from torch import autograd
+    # train: 426293  580593
+    # val: 107045    145300
+    # test: 525781   357943
     args = parser.parse_args()
     with open(args.train_src, "rb") as train_file, open(args.val_src, "rb") as val_file:
         train(train_file, val_file, constants.num_tokens, args.batch_size,
