@@ -127,6 +127,10 @@ class CodeMaskPrediction(nn.Module):
         self.ast_embed_model = ast_embed_model
 
         self.type_embed_dim = ast_embed_model.type_embed_dim
+        self.pos_embed_dim = ast_embed_model.pos_embed_dim
+        self.num_types = ast_embed_model.num_types
+        self.num_tokens = ast_embed_model.num_tokens
+
         self.code_encoder = code_encoder
         self.embed_to_node_type = nn.Linear(in_features=self.code_encoder.embed_dim,
                                             out_features=ast_embed_model.num_types)

@@ -81,6 +81,20 @@ def get_num_samples():
         print("\nFinal results", f"{num=} {max_child_index=} {max_num_nodes=}")
 
 
+def get_loss(mask_prediction_model: model.CodeMaskPrediction, tree_data, pad_mask):
+    node_type_predictions, node_token_predictions = mask_prediction_model(
+        tree_data.node_types, tree_data.node_vals, tree_data.node_val_offsets, tree_data.last_parent_index,
+        tree_data.child_index, tree_data.hidden, tree_data.parent_mask, pad_mask
+    )
+    loss_node_type = F.cross_entropy(node_type_predictions.view(-1, mask_prediction_model.num_types),
+                                     tree_data.target_node_types.T.flatten(), ignore_index=0)
+    loss_node_vals = F.cross_entropy(node_token_predictions.view(-1, mask_prediction_model.num_tokens),
+                                     tree_data.target_vals.T.flatten(), ignore_index=0)
+
+    loss = loss_node_type + loss_node_vals
+    return loss, loss_node_type, loss_node_vals
+
+
 def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_path, save_every, load_from, log_file):
     ast_embed_model = model.ASTEmbeddings(len(all_types) + 1, num_tokens)
     code_encoder = model.CodeEncoder()
@@ -108,15 +122,7 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
         for tree_data, pad_mask in load_all_data(train_file, batch_size):
             optim.zero_grad()
 
-            node_type_predictions, node_token_predictions = mask_prediction_model(
-                tree_data.node_types, tree_data.node_vals, tree_data.node_val_offsets, tree_data.last_parent_index,
-                tree_data.child_index, tree_data.hidden, tree_data.parent_mask, pad_mask
-            )
-            loss_node_type = F.cross_entropy(node_type_predictions.view(-1, ast_embed_model.num_types),
-                                             tree_data.target_node_types.T.flatten(), ignore_index=0)
-            loss_node_vals = F.cross_entropy(node_token_predictions.view(-1, ast_embed_model.num_tokens),
-                                             tree_data.target_vals.T.flatten(), ignore_index=0)
-            loss = loss_node_type + loss_node_vals
+            loss, loss_node_type, loss_node_vals = get_loss(mask_prediction_model, tree_data, pad_mask)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(mask_prediction_model.parameters(), 5)
             optim.step()
@@ -127,8 +133,7 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
 
         print("Finished epoch", epoch)
         print("Validating...")
-        evaluation = validate(mask_prediction_model, ast_embed_model.num_types, ast_embed_model.num_tokens,
-                              val_file, batch_size)
+        evaluation = validate(mask_prediction_model, val_file, batch_size)
         print("Result:", evaluation, "Previous best:", best_val)
         print(f"Evaluation at {epoch=}: {evaluation}", file=log_file)
         if evaluation < best_val:
@@ -142,22 +147,14 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
             torch.save(optim.state_dict(), f"{model_out_path}_epoch_{epoch}_optim.bin")
 
 
-def validate(mask_prediction_model: torch.nn.Module, num_types, num_tokens, val_file, batch_size):
+def validate(mask_prediction_model: torch.nn.Module, val_file, batch_size):
     val_file.seek(0)
     mask_prediction_model.eval()
     total_loss = 0
     num_vals = 0
     with torch.no_grad():
         for tree_data, pad_mask in load_all_data(val_file, batch_size):
-            node_type_predictions, node_token_predictions = mask_prediction_model(
-                tree_data.node_types, tree_data.node_vals, tree_data.node_val_offsets, tree_data.last_parent_index,
-                tree_data.child_index, tree_data.hidden, tree_data.parent_mask, pad_mask
-            )
-            loss_node_type = F.cross_entropy(node_type_predictions.view(-1, num_types),
-                                             tree_data.target_node_types.T.flatten(), ignore_index=0)
-            loss_node_vals = F.cross_entropy(node_token_predictions.view(-1, num_tokens),
-                                             tree_data.target_vals.T.flatten(), ignore_index=0)
-            loss = loss_node_type + loss_node_vals
+            loss, _, __ = get_loss(mask_prediction_model, tree_data, pad_mask)
             total_loss += loss.item()
             num_vals += 1
 
