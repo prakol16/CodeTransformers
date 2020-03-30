@@ -66,7 +66,7 @@ class ASTEmbeddings(nn.Module):
         token_embed = self.token_embeddings(node_vals, node_val_offsets.view(-1))
         node_type_embed_final = node_type_embed + \
                                 token_embed.view(batch_size, num_nodes, self.type_embed_dim) * ASTEmbeddings.SCALE_CONST
-        return torch.cat((node_type_embed_final.transpose(0, 1), hidden_states), dim=-1)
+        return torch.cat((node_type_embed_final, hidden_states.transpose(0, 1)), dim=-1)
 
 
 class CodeEncoderLayer(nn.Module):
@@ -78,14 +78,16 @@ class CodeEncoderLayer(nn.Module):
         self.embed_dim = embed_dim
         self.n_heads = n_heads
 
-    def forward(self, node_inputs: torch.Tensor, hidden: torch.Tensor, parent_mask: torch.Tensor,
+    def forward(self, node_inputs_t: torch.Tensor, hidden: torch.Tensor, parent_mask: torch.Tensor,
                 pad_mask: torch.Tensor) -> torch.Tensor:
-        # node_inputs: (num_nodes, batch_size, embed_dim),
+        # node_inputs: (batch_size, num_nodes, embed_dim),
         # parent_mask: (batch_size, num_nodes, num_nodes); True at (i, j) if i is a parent of j
         # hidden: True at (i, j) if i can't see j b/c of mask; (batch_size, num_nodes, num_nodes)
         # pad_mask: True at i if part of padding; (batch_size, num_nodes)
 
         # attn_mask: (batch_size, n_heads, num_nodes, num_nodes)
+        node_inputs = node_inputs_t.transpose(0, 1)
+
         batch_size = parent_mask.size(0)
         num_nodes = node_inputs.size(0)
 
