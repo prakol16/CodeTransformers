@@ -94,7 +94,7 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
 
     for epoch in range(num_epochs):
         train_file.seek(0)
-        for tree_data, pad_mask in load_all_data(train_file, batch_size, batch_size * 100):
+        for tree_data, pad_mask in load_all_data(train_file, batch_size, batch_size * 500):
             optim.zero_grad()
 
             node_type_predictions, node_token_predictions = mask_prediction_model(tree_data, pad_mask)
@@ -133,7 +133,7 @@ def validate(mask_prediction_model: torch.nn.Module, num_types, num_tokens, val_
     total_loss = 0
     num_vals = 0
     with torch.no_grad():
-        for tree_data, pad_mask in load_all_data(val_file, batch_size, batch_size * 100):
+        for tree_data, pad_mask in load_all_data(val_file, batch_size, batch_size * 500):
             node_type_predictions, node_token_predictions = mask_prediction_model(tree_data, pad_mask)
             loss_node_type = F.cross_entropy(node_type_predictions.view(-1, num_types),
                                              tree_data.target_node_types.T.flatten(), ignore_index=0)
