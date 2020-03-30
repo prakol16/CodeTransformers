@@ -153,7 +153,7 @@ def validate(mask_prediction_model: torch.nn.Module, val_file, batch_size):
     total_loss = 0
     num_vals = 0
     with torch.no_grad():
-        for tree_data, pad_mask in load_all_data(val_file, batch_size):
+        for tree_data, pad_mask in tqdm(load_all_data(val_file, batch_size)):
             loss, _, __ = get_loss(mask_prediction_model, tree_data, pad_mask)
             total_loss += loss.item()
             num_vals += 1
