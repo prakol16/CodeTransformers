@@ -132,13 +132,14 @@ class CodeMaskPrediction(nn.Module):
         self.embed_to_token = nn.Linear(in_features=self.code_encoder.embed_dim,
                                              out_features=ast_embed_model.num_tokens)
 
-    def forward(self, tree_data, pad_mask):
+    def forward(self, node_types, node_vals, node_val_offsets,
+                last_parent_index, child_index, hidden, parent_mask, pad_mask):
         # ['node_types', 'parent_mask', 'last_parent_index', 'child_index',
         #  'node_vals', 'node_val_offsets', 'hidden', 'mask_top_index',
         #  'target_node_types', 'target_vals']
-        embeddings = self.ast_embed_model(tree_data.node_types, tree_data.node_vals, tree_data.node_val_offsets,
-                                          tree_data.last_parent_index, tree_data.child_index)
-        encoder_output = self.code_encoder(embeddings, tree_data.hidden, tree_data.parent_mask, pad_mask)
+        embeddings = self.ast_embed_model(node_types, node_vals, node_val_offsets,
+                                          last_parent_index, child_index)
+        encoder_output = self.code_encoder(embeddings, hidden, parent_mask, pad_mask)
         node_type_predictions = self.embed_to_node_type(encoder_output)
         node_token_predictions = self.embed_to_token(encoder_output)
 

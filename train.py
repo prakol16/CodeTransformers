@@ -1,6 +1,7 @@
 from ipaddress import AddressValueError
 
 import torch
+from torch.nn import DataParallel
 import torch.nn.functional as F
 from torch.optim import Adam
 import constants
@@ -18,12 +19,14 @@ from load_python_trees.node_types import all_types
 
 
 parser = argparse.ArgumentParser(description="Trains a CodeTransformer model")
-parser.add_argument('--train-src', help="The preprocessed training data")
-parser.add_argument('--val-src', help="The preprocessed validation data")
+parser.add_argument('--train-src', help="The preprocessed training data", default="python_150k_data_preprocessed/nodes.train.pkl")
+parser.add_argument('--val-src', help="The preprocessed validation data", default="python_150k_data_preprocessed/nodes.val.pkl")
 parser.add_argument('--num-epochs', type=int, help="The number of epochs to train for", default=12)
 parser.add_argument('--batch-size', type=int, help="Batch size", default=64)
 parser.add_argument('--save-every', type=int, help="Save every n epochs", default=3)
-parser.add_argument('--model-out', help="The directory to save the models in")
+parser.add_argument('--model-out', help="The directory to save the models in", default="models/model")
+parser.add_argument('--load-from', help="Load from checkout (give prefix)")
+parser.add_argument('--log-file', help="Log evaluations to this file", default="evallog.txt")
 
 
 class ChunkedData(IterableDataset):
@@ -35,7 +38,7 @@ class ChunkedData(IterableDataset):
         return iter(produce_tree_data(*node) for node in self.data)
 
 
-def load_all_data(f, batch_size, chunk_size):
+def load_all_data(f, batch_size, chunk_size=4096):
     eof = False
     assert chunk_size % batch_size == 0, "Chunk size must be a multiple of batch size"
     while not eof:
@@ -80,7 +83,7 @@ def get_num_samples():
         print("\nFinal results", f"{num=} {max_child_index=} {max_num_nodes=}")
 
 
-def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_path, save_every):
+def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_path, save_every, load_from, log_file):
     ast_embed_model = model.ASTEmbeddings(len(all_types) + 1, num_tokens)
     code_encoder = model.CodeEncoder()
     mask_prediction_model = model.CodeMaskPrediction(ast_embed_model, code_encoder).to(constants.device)
@@ -88,16 +91,28 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
     mask_prediction_model.train()
 
     optim = Adam(mask_prediction_model.parameters(), lr=0.001)
+
+    if load_from is not None:
+        print("Loading pretrained model...")
+        mask_prediction_model.load_state_dict(torch.load(f"{load_from}_weights.bin"))
+        optim.load_state_dict(torch.load(f"{load_from}_optim.bin"))
+
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        mask_prediction_model = DataParallel(mask_prediction_model)
+
     num_iter = 0
 
     best_val = float('inf')
 
     for epoch in range(num_epochs):
         train_file.seek(0)
-        for tree_data, pad_mask in load_all_data(train_file, batch_size, batch_size * 500):
+        for tree_data, pad_mask in load_all_data(train_file, batch_size):
             optim.zero_grad()
 
-            node_type_predictions, node_token_predictions = mask_prediction_model(tree_data, pad_mask)
+            node_type_predictions, node_token_predictions = mask_prediction_model(
+                tree_data.node_types, tree_data.node_vals, tree_data.node_val_offsets, tree_data.last_parent_index,
+                tree_data.child_index, tree_data.hidden, tree_data.parent_mask, pad_mask
+            )
             loss_node_type = F.cross_entropy(node_type_predictions.view(-1, ast_embed_model.num_types),
                                              tree_data.target_node_types.T.flatten(), ignore_index=0)
             loss_node_vals = F.cross_entropy(node_token_predictions.view(-1, ast_embed_model.num_tokens),
@@ -109,13 +124,14 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
 
             num_iter += 1
             if num_iter % 10 == 0:
-                print("Iter", num_iter, "Training loss:", loss.item())
+                print("Iter", num_iter, "Training loss:", loss.item(), f"(type: {loss_node_type.item()}, values: {loss_node_vals.item()})")
 
         print("Finished epoch", epoch)
         print("Validating...")
         evaluation = validate(mask_prediction_model, ast_embed_model.num_types, ast_embed_model.num_tokens,
                               val_file, batch_size)
         print("Result:", evaluation, "Previous best:", best_val)
+        print(f"Evaluation at {epoch=}: {evaluation}", file=log_file)
         if evaluation < best_val:
             print("New best! Saving model...")
             torch.save(mask_prediction_model.state_dict(),  f"{model_out_path}_best_weights.bin")
@@ -123,8 +139,8 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
             best_val = evaluation
         if (epoch + 1) % save_every == 0:
             print("Saving model...")
-            torch.save(mask_prediction_model.state_dict(),  f"{model_out_path}_weights_epoch_{epoch}.bin")
-            torch.save(optim.state_dict(), f"{model_out_path}_optim_epoch_{epoch}.bin")
+            torch.save(mask_prediction_model.state_dict(),  f"{model_out_path}_epoch_{epoch}_weights.bin")
+            torch.save(optim.state_dict(), f"{model_out_path}_epoch_{epoch}_optim.bin")
 
 
 def validate(mask_prediction_model: torch.nn.Module, num_types, num_tokens, val_file, batch_size):
@@ -133,7 +149,7 @@ def validate(mask_prediction_model: torch.nn.Module, num_types, num_tokens, val_
     total_loss = 0
     num_vals = 0
     with torch.no_grad():
-        for tree_data, pad_mask in load_all_data(val_file, batch_size, batch_size * 500):
+        for tree_data, pad_mask in load_all_data(val_file, batch_size):
             node_type_predictions, node_token_predictions = mask_prediction_model(tree_data, pad_mask)
             loss_node_type = F.cross_entropy(node_type_predictions.view(-1, num_types),
                                              tree_data.target_node_types.T.flatten(), ignore_index=0)
@@ -143,7 +159,9 @@ def validate(mask_prediction_model: torch.nn.Module, num_types, num_tokens, val_
             total_loss += loss.item()
             num_vals += 1
 
+    mask_prediction_model.train()
     return total_loss / num_vals
+
 
 if __name__ == "__main__":
     # Final results (train): num=1076863 max_child_index=7222, 4100, ....
@@ -153,9 +171,9 @@ if __name__ == "__main__":
     # val: 107045    145300
     # test: 525781   357943
     args = parser.parse_args()
-    with open(args.train_src, "rb") as train_file, open(args.val_src, "rb") as val_file:
+    with open(args.train_src, "rb") as train_file, open(args.val_src, "rb") as val_file, open(args.log_file, "w") as log_file:
         train(train_file, val_file, constants.num_tokens, args.batch_size,
-              args.num_epochs, args.model_out, args.save_every)
+              args.num_epochs, args.model_out, args.save_every, args.load_from, log_file)
 
 
 
