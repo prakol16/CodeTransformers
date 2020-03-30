@@ -6,3 +6,4 @@ __pycache__/
 *_data_preprocessed/
 models/
 pwd
+evallog.txt

@@ -18,13 +18,12 @@ class ASTEmbeddings(nn.Module):
         self.gru = nn.GRUCell(type_embed_dim, pos_embed_dim)
         self.type_embeddings = nn.Embedding(num_types, type_embed_dim, padding_idx=0)
         # self.token_embeddings = nn.Embedding(num_tokens, type_embed_dim, padding_idx=0)
-        self.token_embeddings = nn.EmbeddingBag(num_tokens, type_embed_dim, mode='mean')
 
         self.positional_embeddings = nn.Embedding.from_pretrained(ASTEmbeddings.get_positional_embeddings(type_embed_dim))
         self.num_positional_embeddings = self.positional_embeddings.num_embeddings
 
     @staticmethod
-    def get_positional_embeddings(d_model, max_len=1000):
+    def get_positional_embeddings(d_model, max_len=300):
         pe = torch.empty(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
@@ -41,17 +40,18 @@ class ASTEmbeddings(nn.Module):
 
     def get_node_embeddings_from_type(self, node_types, child_positions):
         # (batch_size, num_nodes) --> (batch_size, num_nodes, type_embed_dim)
-        # Unnecessary since we filtered the training data to only include nodes w/ < 1000 children
+        # Unnecessary since we filtered the training data to only include nodes w/ < 300 children
         # self.ensure_positional_embeddings_fit(child_positions.max().item())
         return (self.type_embeddings(node_types) * ASTEmbeddings.SCALE_CONST
                 + self.positional_embeddings(child_positions) / ASTEmbeddings.SCALE_CONST)
 
-    def forward(self, node_types, node_vals, node_val_offsets, last_parent_index, child_positions):
+    def forward(self, node_types, node_vals, node_val_offsets, last_parent_index, child_positions, token_embed):
         # node_types: (batch_size, num_nodes)
         # node_vals: ((sum of all the of lengths of the tokens in all the nodes of batch))
         # node_val_offsets: (batch_size, num_nodes)
         # last_parent_index: (batch_size, num_nodes)  <--- indicates index the parent of each node
         # child_positions: (batch_size, num_nodes)   <--- indicates which index of the parent each child is
+        # token_embed: (batch_size, num_nodes, type_embed_dim)
 
         # (batch_size, num_nodes, type_embed_dim)
         node_type_embed = self.get_node_embeddings_from_type(node_types, child_positions)
@@ -63,9 +63,7 @@ class ASTEmbeddings(nn.Module):
                                   if i > 0 else torch.zeros((batch_size, self.pos_embed_dim), device=hidden_states.device))
             inputs = node_type_embed[:, i, :]  # (batch_size, type_embed_dim)
             hidden_states[i, :, :] = self.gru(inputs, prev_hidden_states)
-        token_embed = self.token_embeddings(node_vals, node_val_offsets.view(-1))
-        node_type_embed_final = node_type_embed + \
-                                token_embed.view(batch_size, num_nodes, self.type_embed_dim) * ASTEmbeddings.SCALE_CONST
+        node_type_embed_final = node_type_embed + token_embed * ASTEmbeddings.SCALE_CONST
         return torch.cat((node_type_embed_final, hidden_states.transpose(0, 1)), dim=-1)
 
 
@@ -124,22 +122,28 @@ class CodeEncoder(nn.Module):
 
 
 class CodeMaskPrediction(nn.Module):
-    def __init__(self, ast_embed_model, code_encoder):
+    def __init__(self, ast_embed_model: ASTEmbeddings, code_encoder: CodeEncoder):
         super().__init__()
         self.ast_embed_model = ast_embed_model
+
+        self.type_embed_dim = ast_embed_model.type_embed_dim
         self.code_encoder = code_encoder
         self.embed_to_node_type = nn.Linear(in_features=self.code_encoder.embed_dim,
                                             out_features=ast_embed_model.num_types)
         self.embed_to_token = nn.Linear(in_features=self.code_encoder.embed_dim,
                                              out_features=ast_embed_model.num_tokens)
+        self.token_embeddings = nn.EmbeddingBag(ast_embed_model.num_tokens, self.type_embed_dim, mode='mean')
 
     def forward(self, node_types, node_vals, node_val_offsets,
                 last_parent_index, child_index, hidden, parent_mask, pad_mask):
         # ['node_types', 'parent_mask', 'last_parent_index', 'child_index',
         #  'node_vals', 'node_val_offsets', 'hidden', 'mask_top_index',
         #  'target_node_types', 'target_vals']
+
+        num_nodes = node_types.size(1)
+        token_embed = self.token_embeddings(node_vals, node_val_offsets.view(-1)).view(-1, num_nodes, self.type_embed_dim)
         embeddings = self.ast_embed_model(node_types, node_vals, node_val_offsets,
-                                          last_parent_index, child_index)
+                                          last_parent_index, child_index, token_embed)
         encoder_output = self.code_encoder(embeddings, hidden, parent_mask, pad_mask)
         node_type_predictions = self.embed_to_node_type(encoder_output)
         node_token_predictions = self.embed_to_token(encoder_output)

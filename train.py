@@ -1,5 +1,3 @@
-from ipaddress import AddressValueError
-
 import torch
 from torch.nn import DataParallel
 import torch.nn.functional as F
@@ -38,7 +36,7 @@ class ChunkedData(IterableDataset):
         return iter(produce_tree_data(*node) for node in self.data)
 
 
-def load_all_data(f, batch_size, chunk_size=4096):
+def load_all_data(f, batch_size, chunk_size=3072):
     eof = False
     assert chunk_size % batch_size == 0, "Chunk size must be a multiple of batch size"
     while not eof:
@@ -88,7 +86,6 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
     code_encoder = model.CodeEncoder()
     mask_prediction_model = model.CodeMaskPrediction(ast_embed_model, code_encoder).to(constants.device)
 
-
     mask_prediction_model.train()
 
     optim = Adam(mask_prediction_model.parameters(), lr=0.001)
@@ -96,10 +93,10 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
     if load_from is not None:
         print("Loading pretrained model...")
         mask_prediction_model.load_state_dict(torch.load(f"{load_from}_weights.bin"))
-        optim.load_state_dict(torch.load(f"{load_from}_optim.bin"))
-
+        # optim.load_state_dict(torch.load(f"{load_from}_optim.bin"))
 
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        mask_prediction_model.ast_embed_model = DataParallel(ast_embed_model)
         mask_prediction_model.code_encoder = DataParallel(code_encoder)
 
     num_iter = 0
@@ -152,7 +149,10 @@ def validate(mask_prediction_model: torch.nn.Module, num_types, num_tokens, val_
     num_vals = 0
     with torch.no_grad():
         for tree_data, pad_mask in load_all_data(val_file, batch_size):
-            node_type_predictions, node_token_predictions = mask_prediction_model(tree_data, pad_mask)
+            node_type_predictions, node_token_predictions = mask_prediction_model(
+                tree_data.node_types, tree_data.node_vals, tree_data.node_val_offsets, tree_data.last_parent_index,
+                tree_data.child_index, tree_data.hidden, tree_data.parent_mask, pad_mask
+            )
             loss_node_type = F.cross_entropy(node_type_predictions.view(-1, num_types),
                                              tree_data.target_node_types.T.flatten(), ignore_index=0)
             loss_node_vals = F.cross_entropy(node_token_predictions.view(-1, num_tokens),
