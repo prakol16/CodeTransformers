@@ -85,10 +85,11 @@ def get_num_samples():
 
 def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_path, save_every, load_from, log_file):
     ast_embed_model = model.ASTEmbeddings(len(all_types) + 1, num_tokens)
-    code_encoder = model.CodeEncoder().to(constants.device)
-    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-        code_encoder = DataParallel(code_encoder)
+    code_encoder = model.CodeEncoder()
     mask_prediction_model = model.CodeMaskPrediction(ast_embed_model, code_encoder).to(constants.device)
+
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        mask_prediction_model.code_encoder = DataParallel(code_encoder)
 
     mask_prediction_model.train()
 
