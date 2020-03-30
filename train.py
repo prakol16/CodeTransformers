@@ -88,8 +88,6 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
     code_encoder = model.CodeEncoder()
     mask_prediction_model = model.CodeMaskPrediction(ast_embed_model, code_encoder).to(constants.device)
 
-    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-        mask_prediction_model.code_encoder = DataParallel(code_encoder)
 
     mask_prediction_model.train()
 
@@ -100,6 +98,9 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
         mask_prediction_model.load_state_dict(torch.load(f"{load_from}_weights.bin"))
         optim.load_state_dict(torch.load(f"{load_from}_optim.bin"))
 
+
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        mask_prediction_model.code_encoder = DataParallel(code_encoder)
 
     num_iter = 0
 
