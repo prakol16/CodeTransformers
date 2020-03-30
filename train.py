@@ -49,7 +49,8 @@ def load_all_data(f, batch_size, chunk_size=3072):
                 break
         random.shuffle(data)
 
-        yield from DataLoader(ChunkedData(data), batch_size=batch_size, collate_fn=collate_batch)
+        # We need the drop_last=True in order for data to be parallelizable
+        yield from DataLoader(ChunkedData(data), batch_size=batch_size, collate_fn=collate_batch, drop_last=True)
 
 
 def get_num_samples():
@@ -110,6 +111,7 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
         # optim.load_state_dict(torch.load(f"{load_from}_optim.bin"))
 
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        assert batch_size % torch.cuda.device_count() == 0, "Batch size must be a multiple of device_count to use parallelization"
         mask_prediction_model.ast_embed_model = DataParallel(ast_embed_model)
         mask_prediction_model.code_encoder = DataParallel(code_encoder)
 
