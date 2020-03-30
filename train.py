@@ -107,7 +107,7 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
 
     if load_from is not None:
         print("Loading pretrained model...")
-        mask_prediction_model.load_state_dict(torch.load(f"{load_from}_weights.bin"))
+        mask_prediction_model.load_state_dict(torch.load(f"{load_from}_weights.bin", map_location=constants.device))
         # optim.load_state_dict(torch.load(f"{load_from}_optim.bin"))
 
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
