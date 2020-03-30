@@ -22,8 +22,8 @@ parser = argparse.ArgumentParser(description="Trains a CodeTransformer model")
 parser.add_argument('--train-src', help="The preprocessed training data", default="python_150k_data_preprocessed/nodes.train.pkl")
 parser.add_argument('--val-src', help="The preprocessed validation data", default="python_150k_data_preprocessed/nodes.val.pkl")
 parser.add_argument('--num-epochs', type=int, help="The number of epochs to train for", default=12)
-parser.add_argument('--batch-size', type=int, help="Batch size", default=64)
-parser.add_argument('--save-every', type=int, help="Save every n epochs", default=3)
+parser.add_argument('--batch-size', type=int, help="Batch size", default=32)
+parser.add_argument('--save-every', type=int, help="Save every n epochs", default=4)
 parser.add_argument('--model-out', help="The directory to save the models in", default="models/model")
 parser.add_argument('--load-from', help="Load from checkout (give prefix)")
 parser.add_argument('--log-file', help="Log evaluations to this file", default="evallog.txt")
@@ -85,7 +85,9 @@ def get_num_samples():
 
 def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_path, save_every, load_from, log_file):
     ast_embed_model = model.ASTEmbeddings(len(all_types) + 1, num_tokens)
-    code_encoder = model.CodeEncoder()
+    code_encoder = model.CodeEncoder().to(constants.device)
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        code_encoder = DataParallel(code_encoder)
     mask_prediction_model = model.CodeMaskPrediction(ast_embed_model, code_encoder).to(constants.device)
 
     mask_prediction_model.train()
@@ -97,8 +99,6 @@ def train(train_file, val_file, num_tokens, batch_size, num_epochs, model_out_pa
         mask_prediction_model.load_state_dict(torch.load(f"{load_from}_weights.bin"))
         optim.load_state_dict(torch.load(f"{load_from}_optim.bin"))
 
-    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-        mask_prediction_model = DataParallel(mask_prediction_model)
 
     num_iter = 0
 
